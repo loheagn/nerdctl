@@ -19,7 +19,10 @@ package pull
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/containerd/containerd"
 	ctrcontent "github.com/containerd/containerd/cmd/ctr/commands/content"
@@ -76,6 +79,7 @@ func Pull(ctx context.Context, client *containerd.Client, ref string, config *Co
 		//nolint:staticcheck
 		containerd.WithSchema1Conversion, //lint:ignore SA1019 nerdctl should support schema1 as well.
 		containerd.WithPlatformMatcher(platformMC),
+		containerd.WithImageHandlerWrapper(appendDefaultLabelsHandlerWrapper(ref)),
 	}
 	opts = append(opts, config.RemoteOpts...)
 
@@ -99,4 +103,73 @@ func Pull(ctx context.Context, client *containerd.Client, ref string, config *Co
 
 	<-progress
 	return img, nil
+}
+
+func appendDefaultLabelsHandlerWrapper(ref string) func(f images.Handler) images.Handler {
+	return func(f images.Handler) images.Handler {
+		return images.HandlerFunc(func(ctx context.Context, desc ocispec.Descriptor) ([]ocispec.Descriptor, error) {
+			children, err := f.Handle(ctx, desc)
+			if err != nil {
+				return nil, err
+			}
+			switch desc.MediaType {
+			case ocispec.MediaTypeImageManifest, images.MediaTypeDockerSchema2Manifest:
+				for i := range children {
+					c := &children[i]
+					if images.IsLayerType(c.MediaType) {
+						if c.Annotations == nil {
+							c.Annotations = make(map[string]string)
+						}
+						c.Annotations[ImageRef] = ref
+						c.Annotations[CRIDigest] = c.Digest.String()
+						var layers string
+						for _, l := range children[i:] {
+							if images.IsLayerType(l.MediaType) {
+								ls := fmt.Sprintf("%s,", l.Digest.String())
+								// This avoids the label hits the size limitation.
+								// Skipping layers is allowed here and only affects performance.
+								if err := Validate(NydusDataLayer, layers+ls); err != nil {
+									break
+								}
+								layers += ls
+							}
+						}
+						c.Annotations[CRIImageLayer] = strings.TrimSuffix(layers, ",")
+						c.Annotations[targetManifestDigestLabel] = desc.Digest.String()
+					}
+				}
+			}
+			return children, nil
+		})
+	}
+}
+
+const (
+	Signature = "containerd.io/snapshot/nydus-signature"
+
+	ImageRef          = "containerd.io/snapshot/cri.image-ref"
+	ImagePullSecret   = "containerd.io/snapshot/pullsecret"
+	ImagePullUsername = "containerd.io/snapshot/pullusername"
+
+	TargetSnapshotLabel = "containerd.io/snapshot.ref"
+	CRIImageLayer       = "containerd.io/snapshot/cri.image-layers"
+	CRIDigest           = "containerd.io/snapshot/cri.layer-digest"
+	RemoteLabel         = "containerd.io/snapshot/remote"
+	NydusMetaLayer      = "containerd.io/snapshot/nydus-bootstrap"
+	NydusDataLayer      = "containerd.io/snapshot/nydus-blob"
+
+	targetManifestDigestLabel = "containerd.io/snapshot/cri.manifest-digest"
+
+	maxSize = 4096
+)
+
+// Validate a label's key and value are under 4096 bytes
+func Validate(k, v string) error {
+	if (len(k) + len(v)) > maxSize {
+		if len(k) > 10 {
+			k = k[:10]
+		}
+		return fmt.Errorf("label key and value greater than maximum size (%d bytes), key: %s: %w", maxSize, k, errors.New("invalid argument"))
+	}
+	return nil
 }
