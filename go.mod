@@ -12,6 +12,7 @@ require (
 	github.com/containerd/continuity v0.3.0
 	github.com/containerd/go-cni v1.1.6
 	github.com/containerd/imgcrypt v1.1.5-0.20220421044638-8ba028dca028
+	github.com/containerd/nydus-snapshotter v0.3.0-alpha.1
 	github.com/containerd/stargz-snapshotter v0.11.4
 	github.com/containerd/stargz-snapshotter/estargz v0.11.4
 	github.com/containerd/stargz-snapshotter/ipfs v0.11.4
@@ -70,7 +71,7 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.1 // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20170627025303-887ab5e44cc3 // indirect
 	github.com/distribution/distribution/v3 v3.0.0-20210316161203-a01c71e2477e // indirect
-	github.com/docker/distribution v2.7.1+incompatible // indirect
+	github.com/docker/distribution v2.8.1+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.6.4 // indirect
 	github.com/docker/go-events v0.0.0-20190806004212-e31b211e4f1c // indirect
 	github.com/docker/go-metrics v0.0.1 // indirect
