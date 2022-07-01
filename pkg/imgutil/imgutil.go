@@ -37,7 +37,7 @@ import (
 	"github.com/containerd/nerdctl/pkg/idutil/imagewalker"
 	"github.com/containerd/nerdctl/pkg/imgutil/dockerconfigresolver"
 	"github.com/containerd/nerdctl/pkg/imgutil/pull"
-	"github.com/containerd/nydus-snapshotter/pkg/label"
+	nyduslabel "github.com/containerd/nydus-snapshotter/pkg/label"
 	"github.com/containerd/stargz-snapshotter/fs/source"
 	"github.com/docker/docker/errdefs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -243,7 +243,7 @@ func PullImage(ctx context.Context, client *containerd.Client, stdout, stderr io
 		if nydus {
 			config.RemoteOpts = append(
 				config.RemoteOpts,
-				containerd.WithImageHandlerWrapper(label.AppendLabelsHandlerWrapper(ref)),
+				containerd.WithImageHandlerWrapper(nyduslabel.AppendLabelsHandlerWrapper(ref)),
 			)
 		}
 		overlaybd = isOverlaybd(snapshotter)
