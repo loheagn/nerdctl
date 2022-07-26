@@ -25,8 +25,10 @@ import (
 
 	"github.com/containerd/containerd/images/converter"
 	"github.com/containerd/containerd/images/converter/uncompress"
+	"github.com/containerd/nerdctl/pkg/imgutil"
 	"github.com/containerd/nerdctl/pkg/platformutil"
 	"github.com/containerd/nerdctl/pkg/referenceutil"
+	nydusconvert "github.com/containerd/nydus-snapshotter/pkg/converter"
 	"github.com/containerd/stargz-snapshotter/estargz"
 	estargzconvert "github.com/containerd/stargz-snapshotter/nativeconverter/estargz"
 	zstdchunkedconvert "github.com/containerd/stargz-snapshotter/nativeconverter/zstdchunked"
@@ -65,6 +67,15 @@ func newImageConvertCommand() *cobra.Command {
 	imageConvertCommand.Flags().Int("estargz-compression-level", gzip.BestCompression, "eStargz compression level")
 	imageConvertCommand.Flags().Int("estargz-chunk-size", 0, "eStargz chunk size")
 	imageConvertCommand.Flags().Bool("zstdchunked", false, "Use zstd compression instead of gzip (a.k.a zstd:chunked). Should be used in conjunction with '--oci'")
+	// #endregion
+
+	// #region nydus flags
+	imageConvertCommand.Flags().Bool("nydus", false, "Convert an OCI image to Nydus image. Should be used in conjunction with '--oci'")
+	imageConvertCommand.Flags().String("nydus-builder-path", "nydus-image", "The nydus-image binary path, if unset, search in PATH environment")
+	imageConvertCommand.Flags().String("nydus-work-dir", "/tmp", "Work directory path for image conversion")
+	imageConvertCommand.Flags().String("nydus-chunk-dict","", "Specify a chunk dict expression for image chunk deduplication, " +
+	"for examples: bootstrap:registry:localhost:5000/namespace/app:chunk_dict, bootstrap:local:/path/to/chunk_dict.boot")
+	imageConvertCommand.Flags().String("nydus-fs-version", "5", "Version number of nydus image format, possible values: 5, 6")
 	// #endregion
 
 	// #region generic flags
@@ -126,6 +137,10 @@ func imageConvertAction(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	nydus, err := cmd.Flags().GetBool("nydus")
+	if err != nil {
+		return err
+	}
 	oci, err := cmd.Flags().GetBool("oci")
 	if err != nil {
 		return err
@@ -163,6 +178,35 @@ func imageConvertAction(cmd *cobra.Command, args []string) error {
 		if uncompressValue {
 			return fmt.Errorf("option --%s conflicts with --uncompress", convertType)
 		}
+	}
+
+	if nydus {
+		if estargz {
+			return errors.New("option --nydus conflicts with --estargz")
+		}
+		if zstdchunked {
+			return errors.New("option --nydus conflicts with --zstdchunked")
+		}
+		if !oci {
+			return errors.New("option --nydus should be used in conjunction with '--oci'")
+		}
+
+		nydusOpts, err := getNydusConvertOpts(cmd)
+		if err != nil {
+			return err
+		}
+		convertFunc := imgutil.ConvertToNydusLayer(*nydusOpts)
+		convertHooks := converter.ConvertHooks{
+			PostConvertHook: imgutil.ConvertToNydusHook(*nydusOpts),
+		}
+		convertOpts = append(convertOpts, converter.WithIndexConvertFunc(
+			converter.IndexConvertFuncWithHook(
+				convertFunc,
+				true,
+				platMC,
+				convertHooks,
+			)),
+		)
 	}
 
 	if uncompressValue {
@@ -217,6 +261,31 @@ func getESGZConvertOpts(cmd *cobra.Command) ([]estargz.Option, error) {
 		esgzOpts = append(esgzOpts, estargz.WithAllowPrioritizeNotFound(&ignored))
 	}
 	return esgzOpts, nil
+}
+
+func getNydusConvertOpts(cmd *cobra.Command) (*nydusconvert.PackOption, error) {
+	builderPath, err := cmd.Flags().GetString("nydus-builder-path")
+	if err != nil {
+		return nil, err
+	}
+	workDir, err := cmd.Flags().GetString("nydus-work-dir")
+	if err != nil {
+		return nil, err
+	}
+	chunkDictPath, err := cmd.Flags().GetString("nydus-chunk-dict")
+	if err != nil {
+		return nil, err
+	}
+	fsVersion, err := cmd.Flags().GetString("nydus-fs-version")
+	if err != nil {
+		return nil, err
+	}
+	return &nydusconvert.PackOption{
+		BuilderPath: builderPath,
+		WorkDir: workDir,
+		ChunkDictPath: chunkDictPath,
+		FsVersion: fsVersion,
+	}, nil
 }
 
 func readPathsFromRecordFile(filename string) ([]string, error) {
