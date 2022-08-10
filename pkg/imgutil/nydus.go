@@ -96,13 +96,15 @@ func ConvertToNydusLayer(opt nydusconvert.PackOption) converter.ConvertFunc {
 
 func ConvertToNydusHook(opt nydusconvert.PackOption) converter.ConvertHookFunc {
 	return func(ctx context.Context, cs content.Store, orgDesc ocispec.Descriptor, newDesc *ocispec.Descriptor) (*ocispec.Descriptor, error) {
-		if newDesc.MediaType != ocispec.MediaTypeImageManifest {
+		if !images.IsManifestType(newDesc.MediaType) {
+			// Only need to hook manifest conversion
 			return newDesc, nil
 		}
-		// convert manifest
+
+		// Convert manifest
 		var manifest ocispec.Manifest
 		manifestDesc := *newDesc
-		_, err := readJSON(ctx, cs, &manifest, manifestDesc)
+		labels, err := readJSON(ctx, cs, &manifest, manifestDesc)
 		if err != nil {
 			return nil, errors.Wrap(err, "read manifest json")
 		}
@@ -121,6 +123,10 @@ func ConvertToNydusHook(opt nydusconvert.PackOption) converter.ConvertHookFunc {
 
 		manifest.Layers = append(manifest.Layers, *bootstrapDesc)
 
+		// Update the gc label of bootstrap layer
+		bootstrapGCLabelKey := fmt.Sprintf("containerd.io/gc.ref.content.l.%d", len(manifest.Layers)-1)
+		labels[bootstrapGCLabelKey] = bootstrapDesc.Digest.String()
+
 		// Remove useless annotation.
 		for _, layer := range manifest.Layers {
 			delete(layer.Annotations, nydusconvert.LayerAnnotationUncompressed)
@@ -128,18 +134,20 @@ func ConvertToNydusHook(opt nydusconvert.PackOption) converter.ConvertHookFunc {
 
 		// Update diff ids in image config.
 		var config ocispec.Image
-		labels, err := readJSON(ctx, cs, &config, manifest.Config)
+		configLabels, err := readJSON(ctx, cs, &config, manifest.Config)
 		if err != nil {
 			return nil, errors.Wrap(err, "read image config")
 		}
 		config.RootFS.DiffIDs = append(config.RootFS.DiffIDs, bootstrapDiffID)
 
 		// Update image config in content store.
-		newConfigDesc, err := writeJSON(ctx, cs, config, manifest.Config, "", labels)
+		newConfigDesc, err := writeJSON(ctx, cs, config, manifest.Config, "", configLabels)
 		if err != nil {
 			return nil, errors.Wrap(err, "write image config")
 		}
 		manifest.Config = *newConfigDesc
+		// Update the config gc label
+		labels["containerd.io/gc.ref.content.config"] = newConfigDesc.Digest.String()
 
 		// Update image manifest in content store.
 		newManifestDesc, err := writeJSON(ctx, cs, manifest, manifestDesc, "", labels)

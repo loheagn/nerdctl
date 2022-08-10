@@ -188,7 +188,7 @@ func imageConvertAction(cmd *cobra.Command, args []string) error {
 			return errors.New("option --nydus conflicts with --zstdchunked")
 		}
 		if !oci {
-			return errors.New("option --nydus should be used in conjunction with '--oci'")
+			logrus.Warnln("option --nydus should be used in conjunction with '--oci', forcibly enabling on oci mediatype for nydus conversion")
 		}
 
 		nydusOpts, err := getNydusConvertOpts(cmd)
