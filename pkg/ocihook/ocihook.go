@@ -63,20 +63,20 @@ func Run(stdin io.Reader, stderr io.Writer, event, dataStore, cniPath, cniNetcon
 		return err
 	}
 
-	if containerStateDir := state.Annotations[labels.StateDir]; containerStateDir == "" {
+	containerStateDir := state.Annotations[labels.StateDir]
+	if containerStateDir == "" {
 		return errors.New("state dir must be set")
-	} else {
-		if err := os.MkdirAll(containerStateDir, 0700); err != nil {
-			return fmt.Errorf("failed to create %q: %w", containerStateDir, err)
-		}
-		logFilePath := filepath.Join(containerStateDir, "oci-hook."+event+".log")
-		logFile, err := os.Create(logFilePath)
-		if err != nil {
-			return err
-		}
-		defer logFile.Close()
-		logrus.SetOutput(io.MultiWriter(stderr, logFile))
 	}
+	if err := os.MkdirAll(containerStateDir, 0700); err != nil {
+		return fmt.Errorf("failed to create %q: %w", containerStateDir, err)
+	}
+	logFilePath := filepath.Join(containerStateDir, "oci-hook."+event+".log")
+	logFile, err := os.Create(logFilePath)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	logrus.SetOutput(io.MultiWriter(stderr, logFile))
 
 	opts, err := newHandlerOpts(&state, dataStore, cniPath, cniNetconfPath)
 	if err != nil {
@@ -138,14 +138,17 @@ func newHandlerOpts(state *specs.State, dataStore, cniPath, cniNetconfPath strin
 	case nettype.Host, nettype.None, nettype.Container:
 		// NOP
 	case nettype.CNI:
-		e, err := netutil.NewCNIEnv(cniPath, cniNetconfPath)
+		e, err := netutil.NewCNIEnv(cniPath, cniNetconfPath, netutil.WithDefaultNetwork())
 		if err != nil {
 			return nil, err
 		}
 		cniOpts := []gocni.Opt{
 			gocni.WithPluginDir([]string{cniPath}),
 		}
-		netMap := e.NetworkMap()
+		netMap, err := e.NetworkMap()
+		if err != nil {
+			return nil, err
+		}
 		for _, netstr := range networks {
 			net, ok := netMap[netstr]
 			if !ok {
@@ -329,7 +332,7 @@ func getPortMapOpts(opts *handlerOpts) ([]gocni.NamespaceOpts, error) {
 func getIPAddressOpts(opts *handlerOpts) ([]gocni.NamespaceOpts, error) {
 	if opts.containerIP != "" {
 		if rootlessutil.IsRootlessChild() {
-			return nil, fmt.Errorf("containerIP assignment is not supported in rootless mode")
+			logrus.Debug("container IP assignment is not fully supported in rootless mode. The IP is not accessible from the host (but still accessible from other containers).")
 		}
 
 		return []gocni.NamespaceOpts{
